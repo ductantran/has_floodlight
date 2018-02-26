@@ -1,5 +1,9 @@
 package net.floodlightcontroller.esrc;
 
+import net.floodlightcontroller.packet.Data;
+import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPv4Address;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Timer;
@@ -8,7 +12,7 @@ import java.util.TimerTask;
 public class AdaptiveRouter implements IAdaptiveService {
     private List<IAdaptiveListener> adaptiveListeners = new ArrayList<IAdaptiveListener>();
 
-    private int path = 0;
+    private HASDijkstra hasDijkstra;
 
     @Override
     public void addAdaptiveListener(IAdaptiveListener listener) {
@@ -23,24 +27,32 @@ public class AdaptiveRouter implements IAdaptiveService {
     }
 
     public AdaptiveRouter() {
-        route();
+
     }
 
-    public int getPath() {
-        return path;
+    public HASDijkstra getDijkstraRouter() {
+        return hasDijkstra;
     }
 
-    private void route() {
-        TimerTask timerTask = new TimerTask() {
-            @Override
-            public void run() {
-//                path += 1;
-                notifyListenersOnPathChange();
-            }
-        };
-        Timer timer = new Timer();
-        timer.scheduleAtFixedRate(timerTask, 0,3000);
+    public void setDijkstraRouter(HASDijkstra hasDijkstra) {
+        this.hasDijkstra = hasDijkstra;
     }
+
+    public List<DatapathId> route(DatapathId srcSwitch, DatapathId dstSwitch) {
+        hasDijkstra.execute(srcSwitch);
+        return hasDijkstra.getPath(dstSwitch);
+    }
+
+//    private void route() {
+//        TimerTask timerTask = new TimerTask() {
+//            @Override
+//            public void run() {
+//                notifyListenersOnPathChange();
+//            }
+//        };
+//        Timer timer = new Timer();
+//        timer.scheduleAtFixedRate(timerTask, 0,5000);
+//    }
 
     private void notifyListenersOnPathChange() {
         for (IAdaptiveListener listener : adaptiveListeners) {

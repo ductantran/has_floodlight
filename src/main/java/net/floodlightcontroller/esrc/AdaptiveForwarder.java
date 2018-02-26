@@ -13,6 +13,7 @@ import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
 import net.floodlightcontroller.statistics.IStatisticsService;
 import net.floodlightcontroller.statistics.StatisticsCollector;
+import net.floodlightcontroller.statistics.SwitchPortBandwidth;
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.Match;
@@ -21,13 +22,15 @@ import org.projectfloodlight.openflow.types.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.*;
 
-public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener, ILinkDiscoveryListener, IFloodlightModule {
+public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener, ILinkDiscoveryListener, IFloodlightModule {
     protected IFloodlightProviderService floodlightProvider;
     protected IStatisticsService statisticsService;
     protected ILinkDiscoveryService linkService;
-    protected StatisticsCollector statisticsCollector;
     protected AdaptiveRouter adaptiveRouter;
     protected static Logger logger;
 
@@ -36,8 +39,9 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
     private Set<Link> linksSet;
     private List<Link> links;
     private Map<IPv4Address, DatapathId> mapHostSwitch;
-    private HASDijkstra hasDijkstra;
-    private int currentPath = 0;
+    private boolean isNetworkDiscovered;
+
+    private static final File file = new File("/home/ubuntu14/file.txt");
 
     private final IPv4Address h1MininetIpAddr = IPv4Address.of("10.0.3.1");
     private final IPv4Address h2MininetIpAddr = IPv4Address.of("10.0.3.2");
@@ -46,7 +50,7 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
 
     @Override
     public String getName() {
-        return AdaptiveForwarding.class.getSimpleName();
+        return AdaptiveForwarder.class.getSimpleName();
     }
 
     @Override
@@ -80,13 +84,13 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
 
     @Override
     public void init(FloodlightModuleContext context) throws FloodlightModuleException {
-        logger = LoggerFactory.getLogger(AdaptiveForwarding.class);
+        logger = LoggerFactory.getLogger(AdaptiveForwarder.class);
+        isNetworkDiscovered = false;
 
         floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
         statisticsService = context.getServiceImpl(IStatisticsService.class);
         linkService = context.getServiceImpl(ILinkDiscoveryService.class);
 
-        statisticsCollector = new StatisticsCollector();
         adaptiveRouter = new AdaptiveRouter();
         switchDpids = new ArrayList<>();
         linksSet = new HashSet<>();
@@ -102,15 +106,28 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
     @Override
     public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
         floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-        adaptiveRouter.addAdaptiveListener(this);
         linkService.addListener(this);
+        adaptiveRouter.addAdaptiveListener(this);
+
+        FileWriter fr = null;
+        try {
+            fr = new FileWriter(file, false);
+            fr.write("");
+        } catch (IOException e) {
+            logger.debug(e.getMessage());
+        } finally {
+            try {
+                fr.close();
+            } catch (IOException e) {
+                logger.debug(e.getMessage());
+            }
+        }
+        getLinkBandwidth();
     }
 
     @Override
     public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
-        if ((switchDpids.size() == 6) && (links.size() == 14)) {
-            hasDijkstra = new HASDijkstra(new HASGraph(switchDpids, links));
-        } else {
+        if (!isNetworkDiscovered) {
             return Command.CONTINUE;
         }
 
@@ -142,8 +159,7 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
                     return Command.CONTINUE;
                 }
 
-                hasDijkstra.execute(mapHostSwitch.get(srcIpAddr));
-                List<DatapathId> path = hasDijkstra.getPath(mapHostSwitch.get(dstIpAddr));
+                List<DatapathId> path = adaptiveRouter.route(mapHostSwitch.get(srcIpAddr), mapHostSwitch.get(dstIpAddr));
 
                 logger.debug("[DIJKSTRA] [PATH] " + path.toString());
 
@@ -183,6 +199,13 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
 
         logger.debug("NUMBER OF SWITCHES: " + switchDpids.size());
         logger.debug("NUMBER OF LINKS: " + links.size());
+
+        if ((switchDpids.size() == 6) && (links.size() == 14)) {
+            isNetworkDiscovered = true;
+            adaptiveRouter.setDijkstraRouter(new HASDijkstra(new HASGraph(switchDpids, links)));
+        } else {
+            isNetworkDiscovered = false;
+        }
     }
 
     private void addFlowWithEthernetMatch(IOFSwitch sw, EthType ethType, OFPort inPort, OFPort outPort) {
@@ -218,7 +241,6 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
                 .setBufferId(OFBufferId.NO_BUFFER)
                 .setIdleTimeout(0)
                 .setHardTimeout(0)
-                .setPriority(99)
                 .setMatch(match)
                 .setActions(actions)
                 .build();
@@ -228,6 +250,38 @@ public class AdaptiveForwarding implements IAdaptiveListener, IOFMessageListener
 
     @Override
     public void pathChanged() {
+    }
 
+    private void getLinkBandwidth() {
+        TimerTask timerTask = new TimerTask() {
+            @Override
+            public void run() {
+                if (isNetworkDiscovered) {
+                    if (!statisticsService.getBandwidthConsumption().isEmpty()) {
+                        SwitchPortBandwidth b = statisticsService.getBandwidthConsumption(switchDpids.get(2), OFPort.of(1));
+                        int rx = (int) b.getBitsPerSecondRx().getValue();
+                        int tx = (int) b.getBitsPerSecondTx().getValue();
+                        logger.debug("[ADAPTIVE] [BANDWIDTH] [" + b.getSwitchId().toString() + "-" + b.getSwitchPort().getPortNumber() + "]");
+                        logger.debug("---------- RX: " + rx/1000 + "kbps");
+                        logger.debug("---------- TX: " + tx/1000 + "kbps");
+                        FileWriter fr = null;
+                        try {
+                            fr = new FileWriter(file, true);
+                            fr.write((rx+tx)/1000 + "\n");
+                        } catch (IOException e) {
+                            logger.debug(e.getMessage());
+                        } finally {
+                            try {
+                                fr.close();
+                            } catch (IOException e) {
+                                logger.debug(e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        Timer timer = new Timer();
+        timer.scheduleAtFixedRate(timerTask, 0,1000);
     }
 }
