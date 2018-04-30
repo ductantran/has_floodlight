@@ -32,6 +32,8 @@ public class Link implements Comparable<Link> {
     private DatapathId dst;
     @JsonProperty("dst-port")
     private OFPort dstPort;
+    @JsonProperty("weight")
+    private int weight;
     @JsonProperty("latency") 
     private U64 latency; /* we intentionally exclude the latency from hashcode and equals */
 
@@ -40,6 +42,7 @@ public class Link implements Comparable<Link> {
         this.srcPort = srcPort;
         this.dst = dstId;
         this.dstPort = dstPort;
+        this.weight = 1;
         this.latency = latency;
     }
 
@@ -66,6 +69,10 @@ public class Link implements Comparable<Link> {
     public OFPort getDstPort() {
         return dstPort;
     }
+
+    public int getWeight() {
+        return this.weight;
+    }
     
     public U64 getLatency() {
     	return latency;
@@ -85,6 +92,10 @@ public class Link implements Comparable<Link> {
 
     public void setDstPort(OFPort dstPort) {
         this.dstPort = dstPort;
+    }
+
+    public void setWeight(int weight) {
+        this.weight = weight;
     }
     
     public void setLatency(U64 latency) {
@@ -133,6 +144,8 @@ public class Link implements Comparable<Link> {
                 + dstPort.toString()
                 + ", latency="
                 + String.valueOf(latency.getValue())
+                + ", weight="
+                + String.valueOf(weight)
                 + "]";
     }
     
