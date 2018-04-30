@@ -1,18 +1,21 @@
 package net.floodlightcontroller.esrc;
 
+import net.floodlightcontroller.linkdiscovery.Link;
 import net.floodlightcontroller.packet.Data;
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.IPv4Address;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 
-public class AdaptiveRouter implements IAdaptiveService {
+public class AdaptiveRouter implements IAdaptiveService, IAdaptiveListener {
     private List<IAdaptiveListener> adaptiveListeners = new ArrayList<IAdaptiveListener>();
 
     private HASDijkstra hasDijkstra;
+    private HASDFS hasDFS;
+    private AdaptiveRouteManager routeManager;
+
+    private DatapathId srcSw = null;
+    private DatapathId dstSw = null;
 
     @Override
     public void addAdaptiveListener(IAdaptiveListener listener) {
@@ -26,7 +29,17 @@ public class AdaptiveRouter implements IAdaptiveService {
         }
     }
 
+    @Override
+    public void reroute() {
+        System.out.println("REROUTE");
+//        updateLinkCost();
+        findPathfromSource(srcSw);
+        notifyListenersOnPathChange();
+    }
+
     public AdaptiveRouter() {
+//        routeManager = new AdaptiveRouteManager(8888);
+//        routeManager.addAdaptiveListener(this);
 
     }
 
@@ -38,25 +51,47 @@ public class AdaptiveRouter implements IAdaptiveService {
         this.hasDijkstra = hasDijkstra;
     }
 
-    public List<DatapathId> route(DatapathId srcSwitch, DatapathId dstSwitch) {
-        hasDijkstra.execute(srcSwitch);
-        return hasDijkstra.getPath(dstSwitch);
+    public void setDFSRouter(HASDFS hasDFS) {
+        this.hasDFS = hasDFS;
     }
 
-//    private void route() {
-//        TimerTask timerTask = new TimerTask() {
-//            @Override
-//            public void run() {
-//                notifyListenersOnPathChange();
-//            }
-//        };
-//        Timer timer = new Timer();
-//        timer.scheduleAtFixedRate(timerTask, 0,5000);
-//    }
+    public List<List<DatapathId>> getAllPathsFromSourceToDestination(DatapathId srcSwitch, DatapathId dstSwitch) {
+        hasDFS.searchAllPathsFromSourceToDestination(srcSwitch, dstSwitch);
+        return hasDFS.allPaths;
+    }
+
+    public void findPathfromSource(DatapathId srcSwitch) {
+        this.srcSw = srcSwitch;
+        hasDijkstra.execute(srcSw);
+    }
+
+    public List<DatapathId> getPathToDestination(DatapathId dstSwitch) {
+        this.dstSw = dstSwitch;
+        return hasDijkstra.getPath(dstSw);
+    }
+
+    public List<DatapathId> getPath() {
+        return hasDijkstra.getPath(dstSw);
+    }
 
     private void notifyListenersOnPathChange() {
         for (IAdaptiveListener listener : adaptiveListeners) {
             listener.pathChanged();
+        }
+    }
+
+    public void updateLinkCost() {
+        List<Link> links = hasDijkstra.edges;
+        Random rand = new Random();
+        for (Link link1 : links) {
+            for (Link link2 : links) {
+                if (link1.getSrc().equals(link2.getDst()) && link1.getDst().equals(link2.getSrc())) {
+                    int weight = rand.nextInt(100) + 1;
+                    link1.setWeight(weight);
+                    link2.setWeight(weight);
+                    System.out.println("[LINK-UPDATED] " + link1.toString());
+                }
+            }
         }
     }
 }

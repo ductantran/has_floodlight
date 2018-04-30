@@ -6,8 +6,8 @@ import org.projectfloodlight.openflow.types.DatapathId;
 import java.util.*;
 
 public class HASDijkstra {
-    private final List<DatapathId> nodes;
-    private final List<Link> edges;
+    public List<DatapathId> nodes;
+    public List<Link> edges;
     private Set<DatapathId> settledNodes;
     private Set<DatapathId> unSettledNodes;
     private Map<DatapathId, DatapathId> predecessors;

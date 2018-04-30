@@ -1,6 +1,7 @@
 package net.floodlightcontroller.esrc;
 
 import net.floodlightcontroller.core.*;
+import net.floodlightcontroller.core.internal.IOFSwitchService;
 import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
@@ -31,6 +32,7 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
     protected IFloodlightProviderService floodlightProvider;
     protected IStatisticsService statisticsService;
     protected ILinkDiscoveryService linkService;
+    protected IOFSwitchService switchService;
     protected AdaptiveRouter adaptiveRouter;
     protected static Logger logger;
 
@@ -41,11 +43,14 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
     private Map<IPv4Address, DatapathId> mapHostSwitch;
     private boolean isNetworkDiscovered;
 
+    private List<List<DatapathId>> allPaths;
+    private int[] pathThroughputs;
+
     private static final File file = new File("/home/ubuntu14/file.txt");
 
     private final IPv4Address h1MininetIpAddr = IPv4Address.of("10.0.3.1");
     private final IPv4Address h2MininetIpAddr = IPv4Address.of("10.0.3.2");
-    private final IPv4Address clientIpAddr = IPv4Address.of("10.0.1.2");
+    private final IPv4Address clientIpAddr = IPv4Address.of("10.0.4.2");
     private final IPv4Address serverIpAddr = IPv4Address.of("10.0.2.2");
 
     @Override
@@ -90,11 +95,15 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
         floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
         statisticsService = context.getServiceImpl(IStatisticsService.class);
         linkService = context.getServiceImpl(ILinkDiscoveryService.class);
+        switchService = context.getServiceImpl(IOFSwitchService.class);
 
         adaptiveRouter = new AdaptiveRouter();
         switchDpids = new ArrayList<>();
         linksSet = new HashSet<>();
         links = new ArrayList<>();
+
+        allPaths = new ArrayList<>();
+        pathThroughputs = new int[0];
 
         mapHostSwitch = new HashMap<>();
         mapHostSwitch.put(h1MininetIpAddr, DatapathId.of("00:00:00:00:00:00:00:01"));
@@ -122,8 +131,10 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                 logger.debug(e.getMessage());
             }
         }
-        getLinkBandwidth();
+
+        switchBetweenPaths();
     }
+
 
     @Override
     public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
@@ -159,7 +170,18 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                     return Command.CONTINUE;
                 }
 
-                List<DatapathId> path = adaptiveRouter.route(mapHostSwitch.get(srcIpAddr), mapHostSwitch.get(dstIpAddr));
+                allPaths = adaptiveRouter.getAllPathsFromSourceToDestination(mapHostSwitch.get(srcIpAddr), mapHostSwitch.get(dstIpAddr));
+                pathThroughputs = new int[allPaths.size()];
+                logger.debug("[DFS] [PATHS] " + allPaths.toString());
+
+                adaptiveRouter.findPathfromSource(mapHostSwitch.get(srcIpAddr));
+                List<DatapathId> path = adaptiveRouter.getPathToDestination(mapHostSwitch.get(dstIpAddr));
+
+                for (List<DatapathId> aPath : allPaths) {
+                    if (path.equals(aPath)) {
+                        logger.debug("[DFS+DIJKSTRA] [PATH] " + allPaths.indexOf(aPath) + "/" + (allPaths.size()-1));
+                    }
+                }
 
                 logger.debug("[DIJKSTRA] [PATH] " + path.toString());
 
@@ -197,34 +219,16 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
         }
         links = new ArrayList<>(linksSet);
 
-        logger.debug("NUMBER OF SWITCHES: " + switchDpids.size());
-        logger.debug("NUMBER OF LINKS: " + links.size());
-
-        if ((switchDpids.size() == 6) && (links.size() == 14)) {
+        if ((switchDpids.size() == 5) && (links.size() == 12)) {
             isNetworkDiscovered = true;
-            adaptiveRouter.setDijkstraRouter(new HASDijkstra(new HASGraph(switchDpids, links)));
+            HASGraph hasGraph = new HASGraph(switchDpids, links);
+            adaptiveRouter.setDijkstraRouter(new HASDijkstra(hasGraph));
+            adaptiveRouter.setDFSRouter(new HASDFS(hasGraph));
+
+            logger.debug("[ADAPTIVE] [NETWORK] Topology Discovered");
         } else {
             isNetworkDiscovered = false;
         }
-    }
-
-    private void addFlowWithEthernetMatch(IOFSwitch sw, EthType ethType, OFPort inPort, OFPort outPort) {
-        OFFactory ofFactory = sw.getOFFactory();
-        Match match = ofFactory.buildMatch()
-                .setExact(MatchField.ETH_TYPE, ethType)
-                .setExact(MatchField.IN_PORT, inPort)
-                .build();
-        ArrayList<OFAction> actions = new ArrayList<OFAction>();
-        actions.add(ofFactory.actions().buildOutput().setMaxLen(0).setPort(outPort).build());
-        OFFlowAdd flow = ofFactory.buildFlowAdd()
-                .setBufferId(OFBufferId.NO_BUFFER)
-                .setIdleTimeout(0)
-                .setHardTimeout(0)
-                .setPriority(100)
-                .setMatch(match)
-                .setActions(actions)
-                .build();
-        sw.write(flow);
     }
 
     private void addFlowWithEthernetMatch(IOFSwitch sw, EthType ethType, IPv4Address srcIpAddr, IPv4Address dstIpAddr, OFPort outPort) {
@@ -245,43 +249,171 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                 .setActions(actions)
                 .build();
         sw.write(flow);
-        logger.debug("[FLOW] [ADD] [SW-" + sw.getId().toString() + "] " + flow.toString());
+//        logger.debug("[FLOW] [ADD] [SW-" + sw.getId().toString() + "] " + flow.toString());
     }
 
     @Override
     public void pathChanged() {
-    }
+        List<DatapathId> path = adaptiveRouter.getPath();
+        logger.debug("[DIJKSTRA] [REROUTED] [PATH] " + path.toString());
 
-    private void getLinkBandwidth() {
-        TimerTask timerTask = new TimerTask() {
-            @Override
-            public void run() {
-                if (isNetworkDiscovered) {
-                    if (!statisticsService.getBandwidthConsumption().isEmpty()) {
-                        SwitchPortBandwidth b = statisticsService.getBandwidthConsumption(switchDpids.get(2), OFPort.of(1));
-                        int rx = (int) b.getBitsPerSecondRx().getValue();
-                        int tx = (int) b.getBitsPerSecondTx().getValue();
-                        logger.debug("[ADAPTIVE] [BANDWIDTH] [" + b.getSwitchId().toString() + "-" + b.getSwitchPort().getPortNumber() + "]");
-                        logger.debug("---------- RX: " + rx/1000 + "kbps");
-                        logger.debug("---------- TX: " + tx/1000 + "kbps");
-                        FileWriter fr = null;
-                        try {
-                            fr = new FileWriter(file, true);
-                            fr.write((rx+tx)/1000 + "\n");
-                        } catch (IOException e) {
-                            logger.debug(e.getMessage());
-                        } finally {
-                            try {
-                                fr.close();
-                            } catch (IOException e) {
-                                logger.debug(e.getMessage());
-                            }
+        for (DatapathId swDpid : path) {
+            IOFSwitch sw = switchService.getSwitch(swDpid);
+
+            if (path.indexOf(swDpid) == 0) {
+                for (Link link : links) {
+                    if (link.getSrc().equals(swDpid)) {
+                        if (link.getDst().equals(path.get(path.indexOf(swDpid)+1))) {
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, OFPort.of(1));
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, forwardingPort);
+                        }
+                    }
+                }
+            } else if (path.indexOf(swDpid) == path.size()-1) {
+                for (Link link : links) {
+                    if (link.getSrc().equals(swDpid)) {
+                        if (link.getDst().equals(path.get(path.indexOf(swDpid)-1))) {
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, OFPort.of(1));
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, forwardingPort);
+                        }
+                    }
+                }
+            } else {
+                for (Link link : links) {
+                    if (link.getSrc().equals(swDpid)) {
+                        if (link.getDst().equals(path.get(path.indexOf(swDpid)+1))) {
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, forwardingPort);
+                        } else if (link.getDst().equals(path.get(path.indexOf(swDpid)-1))) {
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, forwardingPort);
                         }
                     }
                 }
             }
+
+        }
+    }
+
+    private void pathSwitched(List<DatapathId> path) {
+        logger.debug("");
+        logger.debug("[ADAPTIVE] [SWITCHED] [PATH] " + path.toString());
+
+        for (DatapathId swDpid : path) {
+            IOFSwitch sw = switchService.getSwitch(swDpid);
+
+            if (path.indexOf(swDpid) == 0) {
+                for (Link link : links) {
+                    if (link.getSrc().equals(swDpid)) {
+                        if (link.getDst().equals(path.get(path.indexOf(swDpid)+1))) {
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, OFPort.of(1));
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, h1MininetIpAddr, h2MininetIpAddr, OFPort.of(1));
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, forwardingPort);
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, h2MininetIpAddr, h1MininetIpAddr, forwardingPort);
+                        }
+                    }
+                }
+            } else if (path.indexOf(swDpid) == path.size()-1) {
+                for (Link link : links) {
+                    if (link.getSrc().equals(swDpid)) {
+                        if (link.getDst().equals(path.get(path.indexOf(swDpid)-1))) {
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, OFPort.of(1));
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, h2MininetIpAddr, h1MininetIpAddr, OFPort.of(1));
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, forwardingPort);
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, h1MininetIpAddr, h2MininetIpAddr, forwardingPort);
+                        }
+                    }
+                }
+            } else {
+                for (Link link : links) {
+                    if (link.getSrc().equals(swDpid)) {
+                        if (link.getDst().equals(path.get(path.indexOf(swDpid)+1))) {
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, forwardingPort);
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, h2MininetIpAddr, h1MininetIpAddr, forwardingPort);
+                        } else if (link.getDst().equals(path.get(path.indexOf(swDpid)-1))) {
+                            OFPort forwardingPort = link.getSrcPort();
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, forwardingPort);
+                            addFlowWithEthernetMatch(sw, EthType.IPv4, h1MininetIpAddr, h2MininetIpAddr, forwardingPort);
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+
+    private void switchBetweenPaths() {
+        int t = 3000;
+        TimerTask switchingTask = new TimerTask() {
+            @Override
+            public void run() {
+                if (allPaths.size() > 0) {
+                    for (List<DatapathId> path : allPaths) {
+                        pathSwitched(path);
+                        try {
+                            Thread.sleep(t);
+                            getPathThroughput(path);
+                        } catch (InterruptedException e) {
+                            logger.debug(e.getMessage());
+                        }
+                    }
+
+                    int maxThp = 0;
+                    int maxThpIndex = 0;
+                    String logStr = "[ADAPTIVE] [THROUGHPUTS] ";
+                    StringBuilder logStrBuilder = new StringBuilder(logStr);
+                    for (int i = 0; i < pathThroughputs.length; i++) {
+                        logStrBuilder.append(pathThroughputs[i]);
+                        if (i < pathThroughputs.length - 1) logStrBuilder.append(" | ");
+
+                        if (pathThroughputs[i] > maxThp) {
+                            maxThp = pathThroughputs[i];
+                            maxThpIndex = i;
+                        }
+                    }
+                    logger.debug(logStrBuilder.toString());
+
+                    pathSwitched(allPaths.get(maxThpIndex));
+                }
+            }
         };
         Timer timer = new Timer();
-        timer.scheduleAtFixedRate(timerTask, 0,1000);
+        timer.schedule(switchingTask, 40000, 6*t);
+    }
+
+    private void getPathThroughput(List<DatapathId> path) {
+        if (!statisticsService.getBandwidthConsumption().isEmpty()) {
+            for (List<DatapathId> aPath : allPaths) {
+                DatapathId lastSwitchDpid = aPath.get(aPath.size()-1);
+                DatapathId measuredSwitchDpid = aPath.get(aPath.size()-2);
+                OFPort portToMeasure = null;
+                for (Link measuredLink : links) {
+                    if (measuredLink.getDst().equals(lastSwitchDpid) && measuredLink.getSrc().equals(measuredSwitchDpid)) {
+                        portToMeasure = measuredLink.getSrcPort();
+                    }
+                }
+
+                if (portToMeasure != null) {
+                    SwitchPortBandwidth spBw = statisticsService.getBandwidthConsumption(measuredSwitchDpid, portToMeasure);
+                    int rx = (int) spBw.getBitsPerSecondRx().getValue();
+                    int tx = (int) spBw.getBitsPerSecondTx().getValue();
+                    int throughputInKbps = (rx + tx)/1000;
+
+                    String logStr = "[ADAPTIVE] [THROUGHPUT] [" + spBw.getSwitchId().toString() + "-" + spBw.getSwitchPort().getPortNumber() + "] " + throughputInKbps + "kbps";
+                    if (allPaths.indexOf(aPath) == allPaths.indexOf(path)) {
+                        logStr += " *";
+                        if (throughputInKbps != 0) {
+                            pathThroughputs[allPaths.indexOf(path)] = throughputInKbps;
+                        }
+                    }
+                    logger.debug(logStr);
+                }
+            }
+        }
     }
 }

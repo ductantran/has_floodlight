@@ -1,5 +1,6 @@
 package net.floodlightcontroller.esrc;
 
 public interface IAdaptiveListener {
-    public void pathChanged();
+    default void reroute() {}
+    default void pathChanged() {}
 }
