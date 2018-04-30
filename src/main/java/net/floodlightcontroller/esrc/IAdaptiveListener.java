@@ -1,6 +1,7 @@
 package net.floodlightcontroller.esrc;
 
+import net.floodlightcontroller.core.IListener;
+
 public interface IAdaptiveListener {
-    default void reroute() {}
-    default void pathChanged() {}
+    public void pathChanged();
 }
