@@ -131,8 +131,6 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                 logger.debug(e.getMessage());
             }
         }
-
-        switchBetweenPaths();
     }
 
 
@@ -254,47 +252,7 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
 
     @Override
     public void pathChanged() {
-        List<DatapathId> path = adaptiveRouter.getPath();
-        logger.debug("[DIJKSTRA] [REROUTED] [PATH] " + path.toString());
-
-        for (DatapathId swDpid : path) {
-            IOFSwitch sw = switchService.getSwitch(swDpid);
-
-            if (path.indexOf(swDpid) == 0) {
-                for (Link link : links) {
-                    if (link.getSrc().equals(swDpid)) {
-                        if (link.getDst().equals(path.get(path.indexOf(swDpid)+1))) {
-                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, OFPort.of(1));
-                            OFPort forwardingPort = link.getSrcPort();
-                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, forwardingPort);
-                        }
-                    }
-                }
-            } else if (path.indexOf(swDpid) == path.size()-1) {
-                for (Link link : links) {
-                    if (link.getSrc().equals(swDpid)) {
-                        if (link.getDst().equals(path.get(path.indexOf(swDpid)-1))) {
-                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, OFPort.of(1));
-                            OFPort forwardingPort = link.getSrcPort();
-                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, forwardingPort);
-                        }
-                    }
-                }
-            } else {
-                for (Link link : links) {
-                    if (link.getSrc().equals(swDpid)) {
-                        if (link.getDst().equals(path.get(path.indexOf(swDpid)+1))) {
-                            OFPort forwardingPort = link.getSrcPort();
-                            addFlowWithEthernetMatch(sw, EthType.IPv4, serverIpAddr, clientIpAddr, forwardingPort);
-                        } else if (link.getDst().equals(path.get(path.indexOf(swDpid)-1))) {
-                            OFPort forwardingPort = link.getSrcPort();
-                            addFlowWithEthernetMatch(sw, EthType.IPv4, clientIpAddr, serverIpAddr, forwardingPort);
-                        }
-                    }
-                }
-            }
-
-        }
+        switchBetweenPaths();
     }
 
     private void pathSwitched(List<DatapathId> path) {
@@ -348,10 +306,11 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
     }
 
     private void switchBetweenPaths() {
-        int t = 3000;
+        int t = 4000;
         TimerTask switchingTask = new TimerTask() {
             @Override
             public void run() {
+                adaptiveRouter.getRouteManager().hasRerouted = true;
                 if (allPaths.size() > 0) {
                     for (List<DatapathId> path : allPaths) {
                         pathSwitched(path);
@@ -379,11 +338,12 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                     logger.debug(logStrBuilder.toString());
 
                     pathSwitched(allPaths.get(maxThpIndex));
+                    adaptiveRouter.getRouteManager().hasRerouted = false;
                 }
             }
         };
         Timer timer = new Timer();
-        timer.schedule(switchingTask, 40000, 6*t);
+        timer.schedule(switchingTask, 0);
     }
 
     private void getPathThroughput(List<DatapathId> path) {

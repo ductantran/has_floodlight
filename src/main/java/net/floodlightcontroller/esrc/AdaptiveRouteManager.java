@@ -13,7 +13,7 @@ public class AdaptiveRouteManager implements IAdaptiveService {
 
     private Socket socket = null;
     private ServerSocket serverSocket = null;
-    private DataInputStream input = null;
+    public Boolean hasRerouted = false;
 
     public AdaptiveRouteManager(int port) {
         TimerTask timerTask = new TimerTask() {
@@ -27,24 +27,17 @@ public class AdaptiveRouteManager implements IAdaptiveService {
                         socket = serverSocket.accept();
                         System.out.println("Client connected...");
 
-//                        input = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-                        input = new DataInputStream(socket.getInputStream());
-                        InputStreamReader ir = new InputStreamReader(socket.getInputStream());
-                        BufferedReader br = new BufferedReader(ir);
+                        BufferedReader br = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                        String line;
 
-                        while (br.readLine() != null) {
-                            try {
-                                String line = br.readLine();
-                                System.out.println(line);
+                        while ((line = br.readLine()) != null) {
+                            if (line.equals("Reroute") && !hasRerouted) {
                                 notifyListenersOnRerouting();
-                            } catch (IOException e) {
-                                System.out.println("Error reading: " + e.getMessage());
-                                break;
                             }
                         }
+                        br.close();
                         System.out.println("Closing connection...");
                         socket.close();
-                        input.close();
                     }
                 } catch (IOException e) {
                     System.out.println("Cannot create socket!");

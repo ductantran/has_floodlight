@@ -31,15 +31,12 @@ public class AdaptiveRouter implements IAdaptiveService, IAdaptiveListener {
 
     @Override
     public void reroute() {
-        System.out.println("REROUTE");
-//        updateLinkCost();
-        findPathfromSource(srcSw);
         notifyListenersOnPathChange();
     }
 
     public AdaptiveRouter() {
-//        routeManager = new AdaptiveRouteManager(8888);
-//        routeManager.addAdaptiveListener(this);
+        routeManager = new AdaptiveRouteManager(8888);
+        routeManager.addAdaptiveListener(this);
 
     }
 
@@ -80,18 +77,7 @@ public class AdaptiveRouter implements IAdaptiveService, IAdaptiveListener {
         }
     }
 
-    public void updateLinkCost() {
-        List<Link> links = hasDijkstra.edges;
-        Random rand = new Random();
-        for (Link link1 : links) {
-            for (Link link2 : links) {
-                if (link1.getSrc().equals(link2.getDst()) && link1.getDst().equals(link2.getSrc())) {
-                    int weight = rand.nextInt(100) + 1;
-                    link1.setWeight(weight);
-                    link2.setWeight(weight);
-                    System.out.println("[LINK-UPDATED] " + link1.toString());
-                }
-            }
-        }
+    public AdaptiveRouteManager getRouteManager() {
+        return this.routeManager;
     }
 }
