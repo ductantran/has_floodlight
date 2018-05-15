@@ -31,6 +31,12 @@ public class AdaptiveRouteManager implements IAdaptiveService {
                         String line;
 
                         while ((line = br.readLine()) != null) {
+                            if (line.equals("Start")) {
+                                notifyListenersOnStarting();
+                            }
+                            if (line.equals("Stop")) {
+                                notifyListenersOnStopping();
+                            }
                             if (line.equals("Reroute") && !hasRerouted) {
                                 notifyListenersOnRerouting();
                             }
@@ -64,6 +70,18 @@ public class AdaptiveRouteManager implements IAdaptiveService {
     private void notifyListenersOnRerouting() {
         for (IAdaptiveListener listener : adaptiveListeners) {
             listener.reroute();
+        }
+    }
+
+    private void notifyListenersOnStarting() {
+        for (IAdaptiveListener listener : adaptiveListeners) {
+            listener.start();
+        }
+    }
+
+    private void notifyListenersOnStopping() {
+        for (IAdaptiveListener listener : adaptiveListeners) {
+            listener.stop();
         }
     }
 }

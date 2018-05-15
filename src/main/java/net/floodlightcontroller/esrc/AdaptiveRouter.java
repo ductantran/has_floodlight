@@ -17,6 +17,8 @@ public class AdaptiveRouter implements IAdaptiveService, IAdaptiveListener {
     private DatapathId srcSw = null;
     private DatapathId dstSw = null;
 
+    public boolean hasStreamingStarted = false;
+
     @Override
     public void addAdaptiveListener(IAdaptiveListener listener) {
         adaptiveListeners.add(listener);
@@ -32,6 +34,16 @@ public class AdaptiveRouter implements IAdaptiveService, IAdaptiveListener {
     @Override
     public void reroute() {
         notifyListenersOnPathChange();
+    }
+
+    @Override
+    public void start() {
+        this.hasStreamingStarted = true;
+    }
+
+    @Override
+    public void stop() {
+        this.hasStreamingStarted = false;
     }
 
     public AdaptiveRouter() {

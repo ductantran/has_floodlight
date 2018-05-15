@@ -44,6 +44,7 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
     private boolean isNetworkDiscovered;
 
     private List<List<DatapathId>> allPaths;
+    private int currentPathIndex = 0;
     private int[] pathThroughputs;
 
     private static final File file = new File("/home/ubuntu14/file.txt");
@@ -131,6 +132,8 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                 logger.debug(e.getMessage());
             }
         }
+
+        monitorCurrentPath();
     }
 
 
@@ -178,6 +181,7 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                 for (List<DatapathId> aPath : allPaths) {
                     if (path.equals(aPath)) {
                         logger.debug("[DFS+DIJKSTRA] [PATH] " + allPaths.indexOf(aPath) + "/" + (allPaths.size()-1));
+                        this.currentPathIndex = allPaths.indexOf(aPath);
                     }
                 }
 
@@ -305,8 +309,36 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
         }
     }
 
+    private void monitorCurrentPath() {
+        int monitoringPeriod = 2000;
+        TimerTask monitoringTask = new TimerTask() {
+            @Override
+            public void run() {
+                if (adaptiveRouter.hasStreamingStarted && !adaptiveRouter.getRouteManager().hasRerouted) {
+                    logger.debug("");
+                    getPathThroughput(allPaths.get(currentPathIndex));
+
+                    String logStr = "[MONITOR] [THROUGHPUTS] ";
+                    StringBuilder logStrBuilder = new StringBuilder(logStr);
+                    for (int i = 0; i < pathThroughputs.length; i++) {
+                        logStrBuilder.append(pathThroughputs[i]);
+                        if (i < pathThroughputs.length - 1) logStrBuilder.append(" | ");
+                    }
+                    logger.debug(logStrBuilder.toString());
+
+                    if (pathThroughputs[currentPathIndex] > 100 && pathThroughputs[currentPathIndex] < 1000) {
+                        logger.debug("[MONITOR] Congestion Detected");
+                        switchBetweenPaths();
+                    }
+                }
+            }
+        };
+        Timer timer = new Timer();
+        timer.schedule(monitoringTask, 0, monitoringPeriod);
+    }
+
     private void switchBetweenPaths() {
-        int t = 4000;
+        int t = 2000;
         TimerTask switchingTask = new TimerTask() {
             @Override
             public void run() {
@@ -338,6 +370,7 @@ public class AdaptiveForwarder implements IAdaptiveListener, IOFMessageListener,
                     logger.debug(logStrBuilder.toString());
 
                     pathSwitched(allPaths.get(maxThpIndex));
+                    currentPathIndex = maxThpIndex;
                     adaptiveRouter.getRouteManager().hasRerouted = false;
                 }
             }
